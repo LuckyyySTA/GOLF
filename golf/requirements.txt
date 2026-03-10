@@ -1,0 +1,12 @@
+# math_verify==0.8.0
+vertexai==1.71.1
+sentence_transformers==5.1.1
+fire==0.7.1
+# opentelemetry-api==1.26.0
+# opentelemetry-sdk==1.26.0
+nltk
+langdetect
+immutabledict
+emoji
+syllapy
+spacy

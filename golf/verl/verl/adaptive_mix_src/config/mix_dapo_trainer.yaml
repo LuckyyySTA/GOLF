@@ -1,0 +1,183 @@
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  gen_batch_size: ${data.train_batch_size}
+  val_batch_size: 1312
+  reward_impl_version: 3
+  val_reward_impl_version: 3
+  filter_targets: False
+  shuffle: True
+  sample_target_ratio: 1.0
+  filter_accuracy: False
+  accuracy_lower_bound: 0.0
+  accuracy_upper_bound: 1.0
+  add_tgt_with_acc: False
+  add_tgt_acc_upper_bound: 0.5
+  disable_truncation_advantage: False
+  length_strategy: short  # long/short
+  num_off_policy_targets: 2  
+  max_available_targets: 8            
+
+actor_rollout_ref:
+  actor:
+    strategy: fsdp  # This is for backward-compatibility
+    ppo_mini_batch_size: 256
+    ppo_micro_batch_size: 64
+    ppo_micro_batch_size_per_gpu: ${actor_rollout_ref.actor.ppo_micro_batch_size}
+    use_dynamic_bsz: False
+    ppo_max_token_len_per_gpu: 16384 # n * ${data.max_prompt_length} + ${data.max_response_length}
+    grad_clip: 1.0
+    entropy_coeff: 0.001
+    use_kl_loss: True # True for GRPO, False for REINFORCE++
+    kl_loss_coef: 0.001 # for grpo
+    kl_loss_type: low_var_kl # for grpo
+    ppo_epochs: 1
+    shuffle: False
+    ulysses_sequence_parallel_size: 1 # sp size
+    use_sft_reward: False
+    use_off_policy_loss: False
+    off_policy_loss_impl: token
+    off_policy_cliprange: 0.2
+    off_policy_normalize: False
+    use_off_policy_probs: False
+    use_off_policy_clip: False
+    off_policy_max_clip: -1
+    off_policy_min_clip: -1
+    off_policy_reshape: "no_reshape"
+    off_policy_reshape_weight: 0.1
+    off_policy_reshape_pow_exp: 0.5
+    on_policy_reshape: "no_reshape"
+    on_policy_reshape_weight: 0.1
+    on_policy_reshape_pow_exp: 0.5
+    sft_prefix_reward_weight: 1.0
+    all_max_clip: -1
+    use_ppo_kl_loss: False
+    ppo_kl_loss_coef: 0.01
+    use_adaptive_temperature: False
+    use_adaptive_temperature_fixed: False
+    adaptive_temperature_clip: -1
+    adaptive_temperature_target_entropy: 1.0
+    alpha_lr: 1e-2
+    debug: False
+    use_target_lst: True
+    loss_remove_token_mean: False
+    loss_remove_clip: False
+    sft_loss_coef: 1.0
+    use_sft_multitask_loss: False
+
+  ref:
+    fsdp_config:
+      param_offload: False
+      wrap_policy:
+        # transformer_layer_cls_to_wrap: None
+        min_num_params: 0
+    log_prob_micro_batch_size: 128
+    log_prob_micro_batch_size_per_gpu: ${actor_rollout_ref.ref.log_prob_micro_batch_size}
+    log_prob_use_dynamic_bsz: ${actor_rollout_ref.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${actor_rollout_ref.actor.ppo_max_token_len_per_gpu}
+    ulysses_sequence_parallel_size: ${actor_rollout_ref.actor.ulysses_sequence_parallel_size} # sp size
+    use_ref: True
+  rollout:
+    name: vllm
+    temperature: 1.0
+    val_temperature: 0.6
+    top_k: -1 # 0 for hf rollout, -1 for vllm rollout
+    top_p: 1
+    prompt_length: ${data.max_prompt_length}  # not use for opensource
+    response_length: ${data.max_response_length}
+    # for vllm rollout
+    dtype: bfloat16 # should align with FSDP
+    gpu_memory_utilization: 0.5
+    ignore_eos: False
+    enforce_eager: True
+    free_cache_engine: True
+    load_format: dummy_dtensor
+    tensor_model_parallel_size: 2
+    max_num_batched_tokens: 8192
+    max_num_seqs: 1024
+    log_prob_micro_batch_size: 128
+    log_prob_micro_batch_size_per_gpu: ${actor_rollout_ref.rollout.log_prob_micro_batch_size}
+    log_prob_use_dynamic_bsz: ${actor_rollout_ref.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${actor_rollout_ref.actor.ppo_max_token_len_per_gpu}
+    enable_chunked_prefill: True
+    # for hf rollout
+    do_sample: True
+    # number of responses (i.e. num sample times)
+    n: 8 # > 1 for grpo
+    n_val: 8
+    # define prefix hyperparameters
+    prefix_strategy: random
+    prefix_steps: 1000
+    prefix_linear_max_ratio: 0.8
+    prefix_linear_max_var: 0.1
+    max_prefix_len: 8192
+    min_prefix_ratio: 0.0
+    max_prefix_ratio: 1.0
+    prefix_reward_strategy: all
+    prefix_reward_weight_alpha: 1.0
+    prefix_reward_weight_beta: 1.0
+    prefix_share_across_samples: False
+    n_prefix: ${data.num_off_policy_targets}
+    injection_strategy: 'adaptive'
+    target_selection_strategy: 'best_k'           # best_k/first_k/random_k，默认best_k
+    success_threshold: 0.125                      # 成功阈值: 0.125 表示至少需要 1/n 个正确样本 (1/8=0.125), 也可以设置为绝对数量如 1.0 表示至少 1 个正确
+    # Critique Refiner Configuration
+    use_critique_refiner: False                   # Enable critique-based off-policy sample generation
+    train_refiner_mode: False                     # NEW: Enable refiner training mode (learn aggregation skill)
+    num_targets_from_critique: 1                  # Number of refined targets to generate per sample
+    critique_refiner:
+      critique_key: 'critique'                   # Key name in reward_extra_infos_dict to retrieve critique
+      max_refine_length: null                     # Maximum length for refined responses (null uses max_response_length)
+      refine_type: 'aggregated'                   # 'aggregated' or 'individual' (must be 'aggregated' for train_refiner_mode)
+      refine_temperature: 0.7                     # Temperature for refinement generation
+      refine_top_p: 0.9                           # Top-p sampling parameter for refinement
+      critique_type: 'simple'                     # 'simple' or 'answer'
+      aggregate_only_wrong: False                # Only aggregate incorrect samples
+
+
+reward_model:
+  reward_manager: dapo
+  off_policy_reward_manager: naive
+  val_reward_manager: naive
+  overlong_buffer: 
+    enable: False # We try to avoid forgetting to set enable
+    len: 0
+    penalty_factor: 0.0
+    log: False
+  micro_batch_size: 64
+  max_length: null
+  ulysses_sequence_parallel_size: 1 # sp size
+  use_dynamic_bsz: ${critic.use_dynamic_bsz}
+  forward_max_token_len_per_gpu: ${critic.forward_max_token_len_per_gpu}
+  compute_score_name: mean_exp_log_softmax
+  reward_manager_shaping_function_name: threshold_0
+  reward_manager_discrete_function_name: identity
+  gt_tokens_one_more: False
+  gt_tokens_one_more_adjusted: False
+  reward_type: pr
+  mix_type: hard
+  pr_weight: 0.5
+  vr_weight: 1.0
+  format_coefficient: 0.1
+  format_mode: R1_nothink
+  repetition_penalty: True
+  repetition_penalty_max_repetitions_limit: 10
+  
+
+algorithm:
+  filter_groups:
+    _target_: verl.trainer.config.FilterGroupsConfig
+    enable: False # We try to avoid forgetting to set enable
+    metric: null # acc / score / seq_reward / seq_final_reward / ...
+    max_num_gen_batches: 0 # Non-positive values mean no upper limit
+
+trainer:
+  project_name: verl-mix-dapo
+  skip_valid_mask: False
+  val_only: False
